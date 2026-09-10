@@ -24,6 +24,40 @@ pnpm db:seed --admin ops@example.com data/attendees.json
 pnpm dev            # or: pnpm dev:tailscale  (needs the tailscale CLI)
 ```
 
+## Docker
+
+```sh
+cp .env.example .env      # fill it in, as above
+docker compose build
+docker compose run --rm tools pnpm db:push
+docker compose run --rm tools pnpm db:seed --admin ops@example.com
+docker compose up -d
+```
+
+The app listens on port 3000 in the container, published on 3000. The SQLite file
+lives on the `db` volume, so compose overrides `DATABASE_URL` to `/data/app.db` for
+both services — the value in `.env` only applies outside Docker.
+
+`tools` is the same image built one stage earlier, where the dev dependencies
+(drizzle-kit, the Vite loader `pnpm db:seed` runs on) still exist. It is behind a
+compose profile, so `docker compose up` never starts it. `db:seed` prompts for the
+admin password, which is why it is `run` and not a startup step.
+
+### Environment
+
+Read from `.env` via `env_file`, and by `pnpm dev` outside Docker:
+
+| Variable             | Required | Notes                                                                                                                                                 |
+| -------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`       | yes      | SQLite file path. Compose overrides it to `/data/app.db`                                                                                              |
+| `ORIGIN`             | yes      | Public base URL, scheme included. adapter-node rejects cross-origin form posts without it, the check-in QR code points at it, and passkeys need HTTPS |
+| `BETTER_AUTH_SECRET` | yes      | Also signs the claim tokens. Changing it invalidates outstanding QR links                                                                             |
+| `PASSKEY_RP_ID`      | yes      | Hostname only, no scheme or port. Changing it invalidates registered passkeys                                                                         |
+| `PORT`               | no       | Defaults to 3000. Set in the image, not in `.env`                                                                                                     |
+
+Behind a reverse proxy, `ORIGIN` is the public HTTPS URL and `PASSKEY_RP_ID` its
+hostname — not the container's.
+
 ## How people get accounts
 
 There is no sign-up. Accounts are seeded ahead of time and claimed in person.

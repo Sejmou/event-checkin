@@ -1,0 +1,30 @@
+services:
+  app:
+    build: .
+    ports:
+      - '3000:3000'
+    env_file: .env
+    environment:
+      # Overrides whatever .env says: inside the container the DB lives on the volume.
+      DATABASE_URL: /data/app.db
+    volumes:
+      - db:/data
+    restart: unless-stopped
+
+  # Dev-dependency image for one-off schema and seed runs against the same volume:
+  #   docker compose run --rm tools pnpm db:push
+  #   docker compose run --rm tools pnpm db:seed --admin ops@corp.com
+  tools:
+    build:
+      context: .
+      target: build
+    profiles:
+      - tools
+    env_file: .env
+    environment:
+      DATABASE_URL: /data/app.db
+    volumes:
+      - db:/data
+
+volumes:
+  db:
