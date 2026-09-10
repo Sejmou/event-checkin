@@ -28,3 +28,6 @@ src/lib/paraglide
 project.inlang/cache/
 # SQLite
 *.db
+
+# data files (incl. those used for seeding DB)
+/data
