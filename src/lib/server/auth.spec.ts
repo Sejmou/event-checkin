@@ -1,43 +1,117 @@
 import { beforeAll, expect, test } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { and, eq, isNull } from 'drizzle-orm';
+import { env } from '$env/dynamic/private';
+import { auth, mintSession } from './auth';
+import { db } from './db';
+import { session, user, verification } from './db/schema';
 
-process.env.DATABASE_URL = join(mkdtempSync(join(tmpdir(), 'auth-spec-')), 'test.db');
-process.env.BETTER_AUTH_SECRET = 'test-secret-for-auth-spec-only-32ch';
+const GUEST = 'guest@example.com';
+const ADMIN = 'ops@example.com';
 
-// imported lazily so DATABASE_URL is set before the db client is constructed
-const load = async () => ({
-	auth: (await import('./auth')).auth,
-	db: (await import('./db')).db,
-	user: (await import('./db/schema')).user
+beforeAll(async () => {
+	// `.env.test` points DATABASE_URL at a scratch file; read it from the same
+	// place the app does so the schema push and the app client can't diverge.
+	execFileSync('pnpm', ['exec', 'drizzle-kit', 'push', '--force'], {
+		stdio: 'ignore',
+		env: { ...process.env, DATABASE_URL: env.DATABASE_URL }
+	});
+
+	// Emptied rather than deleted: `db` already holds an open handle to the file.
+	// session/account/passkey cascade from user.
+	await db.delete(user);
+	await db.delete(verification);
 });
 
-beforeAll(() => {
-	execFileSync('pnpm', ['exec', 'drizzle-kit', 'push', '--force'], { stdio: 'ignore' });
-});
+async function seedGuest() {
+	await db.insert(user).values({
+		id: crypto.randomUUID(),
+		email: GUEST,
+		name: 'Ada Lovelace',
+		firstName: 'Ada',
+		lastName: 'Lovelace',
+		role: 'attendee',
+		emailVerified: false,
+		claimedAt: null
+	});
+}
 
-test('sign-up stores firstName/lastName', async () => {
-	const { auth, db, user } = await load();
-
-	// the sveltekitCookies plugin throws outside a request; the user row is
-	// already committed by then, so the assertions below are the real check
-	await auth.api
-		.signUpEmail({
+test('registration is closed', async () => {
+	await expect(
+		auth.api.signUpEmail({
 			body: {
-				email: 'ada@example.com',
-				password: 'correct-horse-battery',
-				name: 'Ada Lovelace',
-				firstName: 'Ada',
-				lastName: 'Lovelace'
+				email: 'walkup@example.com',
+				password: 'correct-horse',
+				name: 'W U',
+				firstName: 'W',
+				lastName: 'U'
 			}
 		})
-		.catch(() => {});
+	).rejects.toThrow();
 
-	const [row] = await db.select().from(user);
-	expect(row.firstName).toBe('Ada');
-	expect(row.lastName).toBe('Lovelace');
-	// better-auth hardcodes `name`; callers derive it from the two real fields
-	expect(row.name).toBe('Ada Lovelace');
+	expect(await db.$count(user, eq(user.email, 'walkup@example.com'))).toBe(0);
+});
+
+test('a seeded guest is signed in without a credential, so they can make one', async () => {
+	await seedGuest();
+
+	const [guest] = await db.select().from(user).where(eq(user.email, GUEST));
+	expect(guest.claimedAt).toBeNull();
+
+	// sveltekitCookies needs a real request and throws without one. The session
+	// row is written before that, and the row is what the claim flow relies on.
+	await mintSession(GUEST, new Headers()).catch(() => {});
+
+	expect(await db.$count(session, eq(session.userId, guest.id))).toBe(1);
+});
+
+test('claiming is guarded so it cannot happen twice', async () => {
+	const claim = () =>
+		db
+			.update(user)
+			.set({ claimedAt: new Date() })
+			.where(and(eq(user.email, GUEST), isNull(user.claimedAt)))
+			.returning({ id: user.id });
+
+	expect(await claim()).toHaveLength(1);
+	// A double submit finds nothing left to claim.
+	expect(await claim()).toHaveLength(0);
+});
+
+test('the seeded admin signs in with their password and is an admin', async () => {
+	const ctx = await auth.$context;
+
+	const created = await ctx.internalAdapter.createUser(
+		{
+			email: ADMIN,
+			name: 'Ops Admin',
+			firstName: 'Ops',
+			lastName: 'Admin',
+			role: 'admin',
+			emailVerified: true,
+			claimedAt: new Date()
+		},
+		{ method: 'admin' }
+	);
+	await ctx.internalAdapter.linkAccount({
+		userId: created.id,
+		accountId: created.id,
+		providerId: 'credential',
+		password: await ctx.password.hash('hunter2hunter2')
+	});
+
+	const sessions = () => db.$count(session, eq(session.userId, created.id));
+
+	await auth.api
+		.signInEmail({ body: { email: ADMIN, password: 'hunter2hunter2' } })
+		.catch(() => {});
+	expect(await sessions()).toBe(1);
+
+	await auth.api
+		.signInEmail({ body: { email: ADMIN, password: 'wrong-password' } })
+		.catch(() => {});
+	expect(await sessions()).toBe(1);
+
+	const [row] = await db.select().from(user).where(eq(user.email, ADMIN));
+	expect(row.role).toBe('admin');
 });
