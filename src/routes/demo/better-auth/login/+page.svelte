@@ -24,9 +24,16 @@
 		/>
 	</label>
 	<label>
-		Name (for registration)
+		First name (for registration)
 		<input
-			name="name"
+			name="firstName"
+			class="mt-1 rounded-md border border-gray-300 bg-white px-3 py-2 shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+		/>
+	</label>
+	<label>
+		Last name (for registration)
+		<input
+			name="lastName"
 			class="mt-1 rounded-md border border-gray-300 bg-white px-3 py-2 shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500 focus:outline-none"
 		/>
 	</label>

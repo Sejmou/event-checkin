@@ -38,14 +38,17 @@ export const actions: Actions = {
 		const formData = await event.request.formData();
 		const email = formData.get('email')?.toString() ?? '';
 		const password = formData.get('password')?.toString() ?? '';
-		const name = formData.get('name')?.toString() ?? '';
+		const firstName = formData.get('firstName')?.toString() ?? '';
+		const lastName = formData.get('lastName')?.toString() ?? '';
 
 		try {
 			await auth.api.signUpEmail({
 				body: {
 					email,
 					password,
-					name,
+					name: `${firstName} ${lastName}`.trim(),
+					firstName,
+					lastName,
 					callbackURL: '/auth/verification-success'
 				}
 			});

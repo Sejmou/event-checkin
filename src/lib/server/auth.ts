@@ -10,6 +10,15 @@ export const auth = betterAuth({
 	secret: env.BETTER_AUTH_SECRET,
 	database: drizzleAdapter(db, { provider: 'sqlite' }),
 	emailAndPassword: { enabled: true },
+	user: {
+		additionalFields: {
+			firstName: { type: 'string', required: true },
+			lastName: { type: 'string', required: true },
+			// better-auth hardcodes `name` on the user model and can't drop it.
+			// Demoted to a nullable derived column; callers set it from the two above.
+			name: { type: 'string', required: false, input: false }
+		}
+	},
 	plugins: [
 		sveltekitCookies(getRequestEvent) // make sure this is the last plugin in the array
 	]
